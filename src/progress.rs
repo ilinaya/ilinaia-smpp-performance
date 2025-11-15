@@ -10,12 +10,15 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     bind_tracker::{BindState, BindStatus, BindTracker},
+    config::{MessageConfig, SmppConfig},
     metrics::{BindSnapshot, Metrics},
 };
 
 pub fn spawn_progress_task(
     metrics: Arc<Metrics>,
     tracker: Arc<BindTracker>,
+    smpp: Arc<SmppConfig>,
+    message: Arc<MessageConfig>,
     shutdown: CancellationToken,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
@@ -23,11 +26,11 @@ pub fn spawn_progress_task(
         loop {
             tokio::select! {
                 _ = shutdown.cancelled() => {
-                    render(&metrics, &tracker, &mut throughput).await;
+                    render(&metrics, &tracker, &smpp, &message, &mut throughput).await;
                     break;
                 }
                 _ = time::sleep(Duration::from_millis(500)) => {
-                    render(&metrics, &tracker, &mut throughput).await;
+                    render(&metrics, &tracker, &smpp, &message, &mut throughput).await;
                 }
             }
         }
@@ -90,7 +93,13 @@ impl ThroughputTracker {
     }
 }
 
-async fn render(metrics: &Metrics, tracker: &BindTracker, throughput: &mut ThroughputTracker) {
+async fn render(
+    metrics: &Metrics,
+    tracker: &BindTracker,
+    smpp: &SmppConfig,
+    message: &MessageConfig,
+    throughput: &mut ThroughputTracker,
+) {
     let snapshot = metrics.snapshot();
     let statuses = tracker.snapshot().await;
     let total_tps = throughput.total_tps(snapshot.attempts);
@@ -127,6 +136,30 @@ async fn render(metrics: &Metrics, tracker: &BindTracker, throughput: &mut Throu
         .join(" ");
 
     writeln!(stdout, "Bind states: {bind_bar}").ok();
+    writeln!(
+        stdout,
+        "Target: {}:{} | system_id={} | password={} | system_type={}",
+        smpp.host,
+        smpp.port,
+        smpp.system_id,
+        smpp.password,
+        smpp.system_type
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or("-")
+    )
+    .ok();
+    writeln!(
+        stdout,
+        "Source: {} (TON {} / NPI {}) | Destination: {} (TON {} / NPI {})",
+        message.source_addr,
+        message.source_ton,
+        message.source_npi,
+        message.destination_addr,
+        message.destination_ton,
+        message.destination_npi
+    )
+    .ok();
     writeln!(stdout, "").ok();
 
     writeln!(

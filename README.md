@@ -116,8 +116,8 @@ docker build -t ilinaia-smpp-perf .
 
 ```bash
 docker run --rm \
+  -e RUST_LOG=info \
   -v $(pwd)/config.toml:/config/config.toml:ro \
-  -v $(pwd)/logs:/logs \
   ilinaia-smpp-perf \
   --config /config/config.toml
 ```

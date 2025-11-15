@@ -40,7 +40,13 @@ async fn main() -> Result<()> {
     let tracker = Arc::new(BindTracker::new(config.load.binds));
     let shutdown = CancellationToken::new();
 
-    let progress_handle = spawn_progress_task(metrics.clone(), tracker.clone(), shutdown.clone());
+    let progress_handle = spawn_progress_task(
+        metrics.clone(),
+        tracker.clone(),
+        Arc::new(config.smpp.clone()),
+        Arc::new(config.message.clone()),
+        shutdown.clone(),
+    );
 
     let mut tasks = Vec::new();
     for idx in 0..config.load.binds {
