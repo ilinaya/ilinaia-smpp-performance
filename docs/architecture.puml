@@ -1,0 +1,29 @@
+@startuml IlinaiaSMPP
+skinparam monochrome true
+title Ilinaia SMPP Performance
+
+actor Operator
+participant "CLI Runner" as CLI
+participant "Bind Manager" as BindMgr
+participant "Per-Bind Task" as BindTask
+participant "Metrics + Tracker" as Metrics
+participant "SMPP Server" as SMSC
+
+Operator -> CLI : cargo run / docker run
+CLI -> BindMgr : Load config\nspawn bind tasks
+loop Each bind
+    BindMgr -> BindTask : tokio::spawn
+    BindTask -> SMSC : bind_transceiver
+    BindTask -> Metrics : update state (Bound)
+    loop submit_sm pipeline
+        BindTask -> SMSC : submit_sm
+        SMSC --> BindTask : submit_sm_resp(message_id)
+        BindTask -> Metrics : latency, OK/Err, msg id
+    end
+end
+Operator -> CLI : Ctrl+C
+CLI -> BindMgr : cancel token
+BindTask -> SMSC : unbind + close
+Metrics -> Operator : Dashboard (TPS, latency, msg IDs)
+@enduml
+
