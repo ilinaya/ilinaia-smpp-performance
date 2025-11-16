@@ -27,6 +27,7 @@ port = 2775
 system_id = "NfDfddEKVI0NCxO"
 password = "rEZYMq5j"
 system_type = ""
+bind_type = "TRX"  # or "TX"; defaults to TRX when omitted
 
 [message]
 source_addr = "12345"
@@ -37,6 +38,8 @@ destination_ton = 2
 destination_npi = 1
 body = "Hi, I’m Alexey. At Vinoc.mx, we provide high-quality wholesale A2P SMS traffic termination"
 service_type = ""
+request_dlr = true
+data_coding = 0  # 0x00 GSM default
 
 [load]
 binds = 2
@@ -50,6 +53,9 @@ Key knobs:
 - `max_tps_per_bind`: per-session throttle. Defaults to `100`; set to `0` to remove throttling and rely on in-flight saturation.
 - `inflight_per_bind`: simultaneous `submit_sm` futures per bind. Larger values (512+) are recommended for 10–50k TPS testing.
 - `source_*` / `destination_*`: TON/NPI values passed straight to SMPP PDUs.
+- `bind_type`: \"TRX\" (transceiver) or \"TX\" (transmitter). If omitted, the tool binds as \"TRX\" by default.
+- `request_dlr`: request delivery receipts on `submit_sm`. Defaults to `true` when omitted.
+- `data_coding`: GSM data-coding scheme byte (0x00 by default). Set to match your SMSC expectations (e.g., GSM 7-bit, UCS2, etc.).
 
 ---
 
@@ -73,12 +79,14 @@ Operator -> CLI : cargo run / docker run
 CLI -> BindMgr : Load config + spawn binds
 loop Each bind
     BindMgr -> BindTask : tokio::spawn
-    BindTask -> SMSC : bind_transceiver
+    BindTask -> SMSC : bind_transceiver (TRX) / bind_transmitter (TX)
     BindTask -> Metrics : state=Bound
     loop submit_sm
         BindTask -> SMSC : submit_sm
         SMSC --> BindTask : submit_sm_resp(message_id)
         BindTask -> Metrics : latency/ok + last message id
+        SMSC --> BindTask : deliver_sm(receipted_message_id)
+        BindTask -> Metrics : DLR count + delay(ms)
     end
 end
 Operator -> CLI : Ctrl+C
@@ -138,5 +146,5 @@ Mount any writable directory (like `./logs`) if you plan to tee dashboard output
 
 Ilinaia SMPP Performance is distributed under the MIT License. You are free to use, copy, modify, merge, publish, distribute, sublicense, or sell copies of the software, provided that the copyright notice is preserved. See [`LICENSE`](./LICENSE) for the full text.
 
-© 2025 ilinaia.com — Alexey Ilinskiy.
+© 2025 ilinaia — Alexey Ilinskiy.
 

@@ -4,16 +4,19 @@ port = 2775
 system_id = "NfDfddEKVI0NCxO"
 password = "rEZYMq5j"
 system_type = ""
+bind_type = "TRX" # or "TX"; if omitted defaults to TRX
 
 [message]
-source_addr = "12345"
+source_addr = "0000000000"
 source_ton = 2
 source_npi = 1
-destination_addr = "491701234567"
+destination_addr = "0000000000"
 destination_ton = 2
 destination_npi = 1
 body = "Hi, I am a short message."
 service_type = ""
+request_dlr = true
+data_coding = 0 # 0x00 GSM default
 
 [load]
 binds = 2

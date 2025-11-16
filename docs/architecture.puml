@@ -13,12 +13,14 @@ Operator -> CLI : cargo run / docker run
 CLI -> BindMgr : Load config\nspawn bind tasks
 loop Each bind
     BindMgr -> BindTask : tokio::spawn
-    BindTask -> SMSC : bind_transceiver
+    BindTask -> SMSC : bind_transceiver (TRX) / bind_transmitter (TX)
     BindTask -> Metrics : update state (Bound)
     loop submit_sm pipeline
         BindTask -> SMSC : submit_sm
         SMSC --> BindTask : submit_sm_resp(message_id)
         BindTask -> Metrics : latency, OK/Err, msg id
+        SMSC --> BindTask : deliver_sm(receipted_message_id)
+        BindTask -> Metrics : DLR count, DLR delay
     end
 end
 Operator -> CLI : Ctrl+C

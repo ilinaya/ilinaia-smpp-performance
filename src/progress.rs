@@ -136,9 +136,10 @@ async fn render(
         .join(" ");
 
     writeln!(stdout, "Bind states: {bind_bar}").ok();
+    writeln!(stdout, "").ok();
     writeln!(
         stdout,
-        "Target: {}:{} | system_id={} | password={} | system_type={}",
+        "Target: {}:{} | system_id={} | password={} | system_type={} | bind_type={}",
         smpp.host,
         smpp.port,
         smpp.system_id,
@@ -146,9 +147,15 @@ async fn render(
         smpp.system_type
             .as_deref()
             .filter(|s| !s.is_empty())
-            .unwrap_or("-")
+            .unwrap_or("-"),
+        match smpp.bind_type {
+            crate::config::BindType::Tx => "TX",
+            crate::config::BindType::Trx => "TRX",
+        }
     )
     .ok();
+    writeln!(stdout, "").ok();
+
     writeln!(
         stdout,
         "Source: {} (TON {} / NPI {}) | Destination: {} (TON {} / NPI {})",
@@ -199,14 +206,29 @@ fn render_bind_line(
         .as_deref()
         .filter(|s| !s.is_empty())
         .unwrap_or("-");
+    let dlr_pct = if snapshot.ok == 0 {
+        0.0
+    } else {
+        (snapshot.dlr_received as f64 / snapshot.ok as f64) * 100.0
+    };
     writeln!(
         stdout,
-        "{} -> TPS {:>8.1} | Avg {:>6.2} ms | OK {:>8} | Err {:>8} | Last ID {}",
+        "{} -> TPS {:>8.1} | Avg {:>6.2} ms | OK {:>8} | Err {:>8} | DLR {:>8} ({:.1}%) Avg {:>6.2} ms | [ENR {:>5} DEL {:>5} EXP {:>5} DELT {:>5} UNDL {:>5} ACC {:>5} UNK {:>5}] | Last ID {}",
         format_state(idx, &status.state),
         tps,
         snapshot.avg_latency_ms,
         snapshot.ok,
         snapshot.err,
+        snapshot.dlr_received,
+        dlr_pct,
+        snapshot.avg_dlr_delay_ms,
+        snapshot.dlr_enroute,
+        snapshot.dlr_delivered,
+        snapshot.dlr_expired,
+        snapshot.dlr_deleted,
+        snapshot.dlr_failed,
+        snapshot.dlr_accepted,
+        snapshot.dlr_unknown,
         last_id
     )
 }

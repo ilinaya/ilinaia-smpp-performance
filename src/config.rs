@@ -25,6 +25,35 @@ impl Config {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BindType {
+    Tx,
+    Trx,
+}
+
+impl Default for BindType {
+    fn default() -> Self {
+        BindType::Trx
+    }
+}
+
+impl<'de> Deserialize<'de> for BindType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.to_ascii_uppercase().as_str() {
+            "TX" => Ok(BindType::Tx),
+            "TRX" => Ok(BindType::Trx),
+            other => Err(serde::de::Error::custom(format!(
+                "invalid bind_type '{}' expected TX or TRX",
+                other
+            ))),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct SmppConfig {
     pub host: String,
@@ -33,6 +62,8 @@ pub struct SmppConfig {
     #[serde(default)]
     pub system_type: Option<String>,
     pub password: String,
+    #[serde(default)]
+    pub bind_type: BindType,
 }
 
 impl SmppConfig {
@@ -56,6 +87,10 @@ pub struct MessageConfig {
     pub body: String,
     #[serde(default)]
     pub service_type: Option<String>,
+    #[serde(default = "default_request_dlr")]
+    pub request_dlr: bool,
+    #[serde(default = "default_data_coding")]
+    pub data_coding: u8,
 }
 
 impl MessageConfig {
@@ -74,6 +109,14 @@ impl MessageConfig {
     pub fn destination_npi(&self) -> Npi {
         Npi::from(self.destination_npi)
     }
+}
+
+const fn default_request_dlr() -> bool {
+    true
+}
+
+const fn default_data_coding() -> u8 {
+    0x00
 }
 
 #[derive(Debug, Clone, Deserialize)]
