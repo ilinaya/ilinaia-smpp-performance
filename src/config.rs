@@ -127,6 +127,8 @@ pub struct LoadConfig {
     pub max_tps_per_bind: u32,
     #[serde(default = "default_inflight")]
     pub inflight_per_bind: usize,
+    #[serde(default = "default_messages_count")]
+    pub messages_count: u64,
 }
 
 impl LoadConfig {
@@ -157,4 +159,8 @@ const fn default_max_tps() -> u32 {
 
 const fn default_inflight() -> usize {
     64
+}
+
+const fn default_messages_count() -> u64 {
+    0
 }

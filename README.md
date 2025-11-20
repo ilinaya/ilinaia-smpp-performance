@@ -10,6 +10,7 @@ Ilinaia SMPP Performance is a high-throughput Rust load generator for benchmarki
 
 - **Configurable load plans**: tune bind counts, TPS ceilings, and outstanding submissions per bind.
 - **Elastic throughput**: set `max_tps_per_bind = 0` to blast as fast as the SMSC allows or pin to deterministic TPS.
+- **Message volume control**: optionally set a total message count limit across all binds for precise load testing scenarios.
 - **Rich observability**: every bind reports its current TPS, average latency, OK/Err totals, and last message ID returned by the SMSC.
 - **Smooth control plane**: `Ctrl+C` propagates a cancellation token, drains in-flight work, and prints a final summary.
 - **Ship anywhere**: prebuilt Docker workflow plus native `cargo run` keeps deployment friction low.
@@ -45,6 +46,7 @@ data_coding = 0  # 0x00 GSM default
 binds = 2
 max_tps_per_bind = 100
 inflight_per_bind = 64
+messages_count = 0  # Total messages limit across all binds, 0 = unlimited
 ```
 
 Key knobs:
@@ -52,6 +54,7 @@ Key knobs:
 - `binds`: number of SMPP transceiver sessions to open (minimum `0`).
 - `max_tps_per_bind`: per-session throttle. Defaults to `100`; set to `0` to remove throttling and rely on in-flight saturation.
 - `inflight_per_bind`: simultaneous `submit_sm` futures per bind. Larger values (512+) are recommended for 10–50k TPS testing.
+- `messages_count`: total messages limit across all binds. Defaults to `0` (unlimited). When set to a value greater than `0`, the tool will stop sending messages once the total count reaches this limit. Useful for running precise load tests with a fixed message volume.
 - `source_*` / `destination_*`: TON/NPI values passed straight to SMPP PDUs.
 - `bind_type`: \"TRX\" (transceiver) or \"TX\" (transmitter). If omitted, the tool binds as \"TRX\" by default.
 - `request_dlr`: request delivery receipts on `submit_sm`. Defaults to `true` when omitted.

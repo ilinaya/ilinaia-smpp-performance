@@ -4,7 +4,7 @@ mod metrics;
 mod progress;
 mod worker;
 
-use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc, sync::atomic::AtomicU64};
 
 use anyhow::Result;
 use clap::Parser;
@@ -39,6 +39,8 @@ async fn main() -> Result<()> {
     let metrics = Arc::new(Metrics::new(config.load.binds));
     let tracker = Arc::new(BindTracker::new(config.load.binds));
     let shutdown = CancellationToken::new();
+    let messages_sent = Arc::new(AtomicU64::new(0));
+    let messages_limit = config.load.messages_count;
 
     let progress_handle = spawn_progress_task(
         metrics.clone(),
@@ -56,6 +58,8 @@ async fn main() -> Result<()> {
             metrics.clone(),
             tracker.clone(),
             shutdown.clone(),
+            messages_sent.clone(),
+            messages_limit,
         ));
         tasks.push(task);
     }

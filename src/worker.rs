@@ -1,4 +1,4 @@
-use std::{str::FromStr, sync::Arc, time::Duration};
+use std::{str::FromStr, sync::Arc, sync::atomic::{AtomicU64, Ordering}, time::Duration};
 
 use anyhow::{Context, Result};
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::FuturesUnordered};
@@ -26,10 +26,12 @@ pub async fn spawn_bind(
     metrics: Arc<Metrics>,
     tracker: Arc<BindTracker>,
     shutdown: CancellationToken,
+    messages_sent: Arc<AtomicU64>,
+    messages_limit: u64,
 ) {
     tracker.set_state(idx, BindState::Connecting).await;
 
-    let result = run_bind(idx, config, metrics, tracker.clone(), shutdown.clone()).await;
+    let result = run_bind(idx, config, metrics, tracker.clone(), shutdown.clone(), messages_sent, messages_limit).await;
 
     if let Err(err) = result {
         tracing::error!(bind = idx, error = ?err, "Bind task failed");
@@ -45,6 +47,8 @@ async fn run_bind(
     metrics: Arc<Metrics>,
     tracker: Arc<BindTracker>,
     shutdown: CancellationToken,
+    messages_sent: Arc<AtomicU64>,
+    messages_limit: u64,
 ) -> Result<()> {
     let (client, mut events) = ConnectionBuilder::new()
         .enquire_link_interval(Duration::from_secs(5))
@@ -165,6 +169,8 @@ async fn run_bind(
         &config,
         shutdown,
         sent_index,
+        messages_sent,
+        messages_limit,
     )
     .await?;
 
@@ -280,6 +286,8 @@ async fn drive_submit_loop(
     config: &Config,
     shutdown: CancellationToken,
     sent_index: Arc<dashmap::DashMap<String, Instant>>,
+    messages_sent: Arc<AtomicU64>,
+    messages_limit: u64,
 ) -> Result<()> {
     let max_tps = config.load.max_tps_per_bind();
     let max_inflight = config.load.inflight_per_bind().max(1);
@@ -297,6 +305,8 @@ async fn drive_submit_loop(
             tracker,
             shutdown,
             sent_index,
+            messages_sent,
+            messages_limit,
         )
         .await
     } else {
@@ -311,6 +321,8 @@ async fn drive_submit_loop(
             tracker,
             shutdown,
             sent_index,
+            messages_sent,
+            messages_limit,
         )
         .await
     }
@@ -326,30 +338,47 @@ async fn drive_unthrottled_loop(
     tracker: Arc<BindTracker>,
     shutdown: CancellationToken,
     sent_index: Arc<dashmap::DashMap<String, Instant>>,
+    messages_sent: Arc<AtomicU64>,
+    messages_limit: u64,
 ) -> Result<()> {
     fill_inflight(
         &mut inflight,
         max_inflight,
         client.clone(),
         submit_template.clone(),
+        messages_sent.clone(),
+        messages_limit,
     );
 
     while !shutdown.is_cancelled() {
+        // Check if limit is reached
+        if messages_limit > 0 && messages_sent.load(Ordering::Relaxed) >= messages_limit {
+            break;
+        }
+        
         tokio::select! {
             _ = shutdown.cancelled() => break,
             Some(outcome) = inflight.next() => {
-                handle_outcome(idx, outcome, &metrics, &tracker, &sent_index).await;
+                handle_outcome(idx, outcome, &metrics, &tracker, &sent_index, messages_sent.clone()).await;
+                
+                // Check limit again after handling outcome
+                if messages_limit > 0 && messages_sent.load(Ordering::Relaxed) >= messages_limit {
+                    break;
+                }
+                
                 queue_if_capacity(
                     &mut inflight,
                     max_inflight,
                     client.clone(),
                     submit_template.clone(),
+                    messages_sent.clone(),
+                    messages_limit,
                 );
             }
         }
     }
 
-    drain_inflight(idx, inflight, &metrics, &tracker, &sent_index).await;
+    drain_inflight(idx, inflight, &metrics, &tracker, &sent_index, messages_sent).await;
     Ok(())
 }
 
@@ -364,6 +393,8 @@ async fn drive_throttled_loop(
     tracker: Arc<BindTracker>,
     shutdown: CancellationToken,
     sent_index: Arc<dashmap::DashMap<String, Instant>>,
+    messages_sent: Arc<AtomicU64>,
+    messages_limit: u64,
 ) -> Result<()> {
     const TICK_MS: u64 = 10;
     let ticks_per_sec = (1000 / TICK_MS) as u32;
@@ -373,12 +404,27 @@ async fn drive_throttled_loop(
     ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
     while !shutdown.is_cancelled() {
+        // Check if limit is reached
+        if messages_limit > 0 && messages_sent.load(Ordering::Relaxed) >= messages_limit {
+            break;
+        }
+        
         tokio::select! {
             _ = shutdown.cancelled() => break,
             Some(outcome) = inflight.next(), if !inflight.is_empty() => {
-                handle_outcome(idx, outcome, &metrics, &tracker, &sent_index).await;
+                handle_outcome(idx, outcome, &metrics, &tracker, &sent_index, messages_sent.clone()).await;
+                
+                // Check limit again after handling outcome
+                if messages_limit > 0 && messages_sent.load(Ordering::Relaxed) >= messages_limit {
+                    break;
+                }
             }
             _ = ticker.tick() => {
+                // Check limit before processing tick
+                if messages_limit > 0 && messages_sent.load(Ordering::Relaxed) >= messages_limit {
+                    break;
+                }
+                
                 allowance += max_tps / ticks_per_sec;
                 remainder += max_tps % ticks_per_sec;
                 if remainder >= ticks_per_sec {
@@ -387,6 +433,9 @@ async fn drive_throttled_loop(
                 }
 
                 while allowance > 0 && inflight.len() < max_inflight {
+                    if messages_limit > 0 && messages_sent.load(Ordering::Relaxed) >= messages_limit {
+                        break;
+                    }
                     inflight.push(submit_once(client.clone(), submit_template.clone()));
                     allowance -= 1;
                 }
@@ -394,7 +443,7 @@ async fn drive_throttled_loop(
         }
     }
 
-    drain_inflight(idx, inflight, &metrics, &tracker, &sent_index).await;
+    drain_inflight(idx, inflight, &metrics, &tracker, &sent_index, messages_sent).await;
     Ok(())
 }
 
@@ -403,8 +452,13 @@ fn fill_inflight(
     max_inflight: usize,
     client: rusmppc::Client,
     submit_template: SubmitSm,
+    messages_sent: Arc<AtomicU64>,
+    messages_limit: u64,
 ) {
     while inflight.len() < max_inflight {
+        if messages_limit > 0 && messages_sent.load(Ordering::Relaxed) >= messages_limit {
+            break;
+        }
         inflight.push(submit_once(client.clone(), submit_template.clone()));
     }
 }
@@ -414,8 +468,13 @@ fn queue_if_capacity(
     max_inflight: usize,
     client: rusmppc::Client,
     submit_template: SubmitSm,
+    messages_sent: Arc<AtomicU64>,
+    messages_limit: u64,
 ) {
     if inflight.len() < max_inflight {
+        if messages_limit > 0 && messages_sent.load(Ordering::Relaxed) >= messages_limit {
+            return;
+        }
         inflight.push(submit_once(client, submit_template));
     }
 }
@@ -437,10 +496,12 @@ async fn handle_outcome(
     metrics: &Arc<Metrics>,
     tracker: &Arc<BindTracker>,
     sent_index: &Arc<dashmap::DashMap<String, Instant>>,
+    messages_sent: Arc<AtomicU64>,
 ) {
     match outcome {
         (Ok(resp), latency) => {
             tracing::debug!(bind = idx, ?resp, "SubmitSmResp");
+            messages_sent.fetch_add(1, Ordering::Relaxed);
             metrics.record_success(idx, latency);
             let message_id = resp.message_id().as_str().to_string();
             tracker
@@ -461,8 +522,9 @@ async fn drain_inflight(
     metrics: &Arc<Metrics>,
     tracker: &Arc<BindTracker>,
     sent_index: &Arc<dashmap::DashMap<String, Instant>>,
+    messages_sent: Arc<AtomicU64>,
 ) {
     while let Some(outcome) = inflight.next().await {
-        handle_outcome(idx, outcome, metrics, tracker, sent_index).await;
+        handle_outcome(idx, outcome, metrics, tracker, sent_index, messages_sent.clone()).await;
     }
 }

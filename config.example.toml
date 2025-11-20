@@ -22,4 +22,5 @@ data_coding = 0 # 0x00 GSM default
 binds = 2
 max_tps_per_bind = 100
 inflight_per_bind = 64
+messages_count = 0  # Total messages limit across all binds, 0 = unlimited
 
